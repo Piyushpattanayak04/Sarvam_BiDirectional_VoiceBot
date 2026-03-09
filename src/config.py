@@ -39,11 +39,11 @@ class LiveKitConfig(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
-class OpenAIConfig(BaseSettings):
-    """OpenAI API configuration for LLM fallback intent classification."""
+class GroqConfig(BaseSettings):
+    """Groq API configuration for LLM fallback intent classification."""
 
-    api_key: str = Field("", alias="OPENAI_API_KEY")
-    llm_model: str = "gpt-4o-mini"
+    api_key: str = Field("", alias="GROQ_API_KEY")
+    llm_model: str = "llama-3.1-8b-instant"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
@@ -91,7 +91,7 @@ class AppConfig(BaseSettings):
     response_timeout_ms: int = Field(800, alias="RESPONSE_TIMEOUT_MS")
 
     sarvam: SarvamConfig = SarvamConfig()  # type: ignore[call-arg]
-    openai: OpenAIConfig = OpenAIConfig()  # type: ignore[call-arg]
+    groq: GroqConfig = GroqConfig()  # type: ignore[call-arg]
     livekit: LiveKitConfig = LiveKitConfig()
     vad: VADConfig = VADConfig()
     audio: AudioConfig = AudioConfig()

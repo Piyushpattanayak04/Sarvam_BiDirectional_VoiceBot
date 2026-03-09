@@ -165,12 +165,22 @@ INTENT_PATTERNS: dict[BankingIntent, list[str]] = {
         r"^(நமஸ்காரம்|வணக்கம்|నమస్కారం|નમસ્તે|नमस्ते|नमस्कार|নমস্কার|হ্যালো|ନମସ୍କାର)$",
     ],
     BankingIntent.CONFIRMATION: [
-        r"^\s*(yes|yeah|yep|sure|ok|okay|confirm|proceed|go ahead|do it|haan|ha|sari|aamaam)\s*$",
-        r"^\s*(ஆமாம்|சரி|ஆம்|అవును|సరే|હા|હાં|ઠીક|हाँ|हां|ठीक है|হ্যাঁ|ঠিক আছে|ହଁ|ଠିକ ଅଛି)\s*$",
+        # English + transliterations — allow trailing punctuation
+        r"^\s*(yes|yeah|yep|sure|ok|okay|confirm|proceed|go ahead|do it|haan|haan ji|ha|sari|aamaam|bilkul|theek hai|theek|ji haan)\s*[.!?]?\s*$",
+        # Hindi — core yes-words plus जी polite suffix/standalone, punctuation tolerance
+        r"^\s*(हाँ|हां|हा|जी|बिल्कुल|ठीक|सही)\s*(जी|है|बिल्कुल)?\s*[।.!?]?\s*$",
+        r"^\s*(हाँ जी|जी हाँ|हां जी|जी हां|जी बिल्कुल|हाँ बिल्कुल|ठीक है|बिल्कुल ठीक)\s*[।.!?]?\s*$",
+        # Other Indian languages — allow trailing punctuation
+        r"^\s*(ஆமாம்|சரி|ஆம்|అవును|సరే|ગા|ગાં|ગુજ|হ্যাঁ|ঠিক আছে|ୱ|ଠିକ ଅଛି)\s*[.!?।]?\s*$",
     ],
     BankingIntent.DENIAL: [
-        r"^\s*(no|nope|nah|cancel|stop|don't|never|nahi|venda|vaddu)\s*$",
-        r"^\s*(வேண்டாம்|இல்லை|వద్దు|లేదు|ના|નહીં|नहीं|नही|না|না ধন্যবাদ|ନା|ଦରକାର ନାହି)\s*$",
+        # English + transliterations — allow trailing punctuation
+        r"^\s*(no|nope|nah|cancel|stop|don't|never|nahi|nahi ji|venda|vaddu)\s*[.!?]?\s*$",
+        # Hindi — with optional polite suffix and punctuation tolerance
+        r"^\s*(नहीं|नही|न|मत)\s*(जी|चाहिए)?\s*[।.!?]?\s*$",
+        r"^\s*(नहीं जी|जी नहीं|नहीं चाहिए|बिल्कुल नहीं|नहीं धन्यवाद)\s*[।.!?]?\s*$",
+        # Other Indian languages — allow trailing punctuation
+        r"^\s*(வேண்டாம்|இல்லை|వద్దు|నేదు|ના|નહીં|না|না ধন্যবাদ|ନା|ଦରକାର ନାହି)\s*[.!?।]?\s*$",
     ],
 }
 
@@ -226,50 +236,28 @@ class RuleBasedIntentDetector:
 # LLM-based intent detection prompt
 # ──────────────────────────────────────────────────────────────────────
 
-LLM_INTENT_SYSTEM_PROMPT = """You are a banking intent classifier for a voice assistant.
-Given user text (which may be in English, Hindi, Tamil, Telugu, Gujarati, or a mix), 
-classify the intent and extract entities.
+LLM_INTENT_SYSTEM_PROMPT = """You are a banking intent classifier. Output ONLY valid JSON.
 
-IMPORTANT: The user text comes from speech recognition and may contain errors, 
-incomplete words, or code-mixed language. Hindi text uses Devanagari script.
+Intents:
+- block_card: block/freeze/lost/stolen card
+- bank_statement: statement/history/transactions/passbook
+- loan_enquiry: loans/EMI/interest/eligibility/borrow
+- greeting: hello/hi/namaste
+- confirmation: yes/ok/sure/haan/haan ji
+- denial: no/cancel/stop/nahi
+- unknown: ONLY if no banking context whatsoever
 
-Available intents:
-- block_card: User wants to block, freeze, or report a lost/stolen card
-- bank_statement: User wants bank statement, transaction history, or account details
-- loan_enquiry: User wants information about loans, EMIs, interest rates, eligibility
-- greeting: A greeting or hello
-- confirmation: User is confirming (yes, ok, sure, हाँ, ठीक है)
-- denial: User is denying (no, cancel, stop, नहीं)
-- unknown: Use ONLY when the utterance has absolutely no connection to banking services
+Rules:
+- NEVER default to unknown if any banking context exists.
+- Vague intent in banking conversation -> loan_enquiry.
+- Card lost/stolen/freeze -> block_card.
+- Transaction history/passbook -> bank_statement.
+- Loan/EMI/interest/borrow -> loan_enquiry.
 
-CLASSIFICATION RULES:
-- Always pick the BEST matching intent. Do NOT default to 'unknown' if there is any indication of a banking need.
-- Vague expressions like "I want to know", "tell me", "मुझे जानना है", "बताओ" in a banking context → loan_enquiry (most common follow-up)
-- Anything about a card being lost, blocked, stolen, frozen → block_card
-- Any mention of account history, transactions, passbook, statement → bank_statement  
-- Any mention of loan, borrow, EMI, interest rate, eligibility → loan_enquiry
-- If the user mentions their previous topic (e.g. they were discussing loans) → use that intent
+Extract: "days" (int) for bank_statement, "loan_type" (str) for loan_enquiry.
+Detect language code: en/hi/ta/te/gu/bn/or/mixed.
 
-For bank_statement, extract 'days' (number of days for the statement period).
-For loan_enquiry, extract 'loan_type' if mentioned (personal, home, car, education, business).
-
-Language detection:
-- "en": English
-- "hi": Hindi (Devanagari script, e.g. मुझे लोन चाहिए)
-- "ta": Tamil
-- "te": Telugu
-- "gu": Gujarati
-- "bn": Bengali (e.g. আমার কার্ড হারিয়ে গেছে)
-- "or": Odia (e.g. ମୋ କାର୍ଡ ହଜି ଯାଇଛି)
-- "mixed": Mixed language / code-switching
-
-Respond ONLY with valid JSON:
-{
-  "intent": "block_card|bank_statement|loan_enquiry|greeting|confirmation|denial|unknown",
-  "confidence": 0.0-1.0,
-  "entities": {"days": 30, "loan_type": "personal"},
-  "detected_language": "en|hi|ta|te|gu|bn|or|mixed"
-}"""
+{"intent":"...","confidence":0.0-1.0,"entities":{},"detected_language":"..."}"""
 
 
 def build_llm_intent_prompt(user_text: str, conversation_context: str = "") -> list[dict[str, str]]:

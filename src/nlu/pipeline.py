@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from openai import OpenAI
+from groq import Groq
 
 from src.config import AppConfig
 from src.logging_config import get_logger
@@ -51,14 +51,14 @@ class NLUPipeline:
         self._rule_detector = RuleBasedIntentDetector()
         self._entity_extractor = EntityExtractor()
         self._app_config = app_config
-        self._client: OpenAI | None = None
+        self._client: Groq | None = None
         # Cache last 50 LLM results to avoid redundant API calls for identical utterances
         self._llm_cache: dict[str, IntentResult] = {}
         self._cache_max_size = 50
 
-    def _get_client(self) -> OpenAI:
+    def _get_client(self) -> Groq:
         if self._client is None:
-            self._client = OpenAI(api_key=self._app_config.openai.api_key)
+            self._client = Groq(api_key=self._app_config.groq.api_key)
         return self._client
 
     async def process(
@@ -135,7 +135,7 @@ class NLUPipeline:
     async def _llm_classify(
         self, text: str, conversation_context: str
     ) -> IntentResult:
-        """Use GPT-4o-mini for fast, low-latency intent classification."""
+        """Use Groq llama3-8b-8192 for fast, low-latency intent classification."""
         client = self._get_client()
         messages = build_llm_intent_prompt(text, conversation_context)
 
@@ -145,7 +145,7 @@ class NLUPipeline:
             response = await asyncio.wait_for(
                 asyncio.to_thread(
                     client.chat.completions.create,
-                    model=self._app_config.openai.llm_model,
+                    model=self._app_config.groq.llm_model,
                     messages=messages,  # type: ignore[arg-type]
                     max_tokens=100,
                     temperature=0,
