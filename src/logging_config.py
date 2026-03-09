@@ -52,9 +52,12 @@ def setup_logging(log_level: str = "INFO", json_output: bool = False) -> None:
     root_logger.addHandler(handler)
     root_logger.setLevel(getattr(logging, log_level.upper()))
 
-    # Quiet noisy libraries
-    for name in ("uvicorn.access", "websockets", "httpcore"):
+    # Quiet noisy libraries and SDK internals
+    for name in ("uvicorn.access", "websockets", "httpcore", "httpx", "groq", "openai"):
         logging.getLogger(name).setLevel(logging.WARNING)
+
+    # Suppress all src.* info/debug — intent JSON is printed directly
+    logging.getLogger("src").setLevel(logging.WARNING)
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:

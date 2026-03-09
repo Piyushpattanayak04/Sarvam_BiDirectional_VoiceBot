@@ -49,6 +49,7 @@ Pipeline Architecture (per session):
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 
@@ -270,13 +271,14 @@ class VoiceSession:
                 nlu_result = await self._nlu.process(transcript, context_summary)
                 nlu_latency = (time.monotonic() - nlu_start) * 1000
 
-                logger.info(
-                    "nlu_complete",
-                    intent=nlu_result.intent.intent.value,
-                    confidence=nlu_result.intent.confidence,
-                    entities=nlu_result.entities.__dict__,
-                    latency_ms=round(nlu_latency),
-                )
+                print(json.dumps({
+                    "transcript": transcript,
+                    "intent": nlu_result.intent.intent.value,
+                    "confidence": round(nlu_result.intent.confidence, 3),
+                    "entities": {k: v for k, v in nlu_result.entities.__dict__.items() if v is not None},
+                    "language": nlu_result.intent.detected_language,
+                    "nlu_latency_ms": round(nlu_latency),
+                }, ensure_ascii=False))
 
                 # Update language detection — prefer LLM result, fall back to script detection
                 if self._context:
