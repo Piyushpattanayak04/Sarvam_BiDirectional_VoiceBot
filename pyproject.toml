@@ -1,0 +1,53 @@
+[project]
+name = "sarvam-bd-voicebot"
+version = "1.0.0"
+description = "Production-grade Bidirectional Voice Conversation Agent for Banking using Sarvam Streaming API"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "websockets>=12.0",
+    "sarvamai>=0.1.0",
+    "livekit-agents[sarvam,openai,silero]>=0.8.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "numpy>=1.26.0",
+    "webrtcvad>=2.0.10",
+    "aiohttp>=3.9.0",
+    "structlog>=23.2.0",
+    "openai>=1.6.0",
+    "httpx>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "A", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "e2e: End-to-end tests",
+    "slow: Slow tests",
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true

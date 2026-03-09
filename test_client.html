@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VoiceBot Test Client</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 2rem; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #38bdf8; }
+  .subtitle { color: #94a3b8; font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .status-bar { display: flex; gap: 1rem; align-items: center; margin-bottom: 1.5rem; font-size: 0.8rem; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .dot-red { background: #ef4444; }
+  .dot-green { background: #22c55e; }
+  .dot-yellow { background: #eab308; }
+  .chat-box { width: 100%; max-width: 600px; flex: 1; background: #1e293b; border-radius: 12px; padding: 1rem; overflow-y: auto; margin-bottom: 1rem; max-height: 400px; min-height: 200px; }
+  .msg { padding: 0.5rem 0.75rem; margin: 0.4rem 0; border-radius: 8px; font-size: 0.9rem; max-width: 85%; }
+  .msg-user { background: #1d4ed8; margin-left: auto; text-align: right; }
+  .msg-bot { background: #334155; }
+  .msg-system { background: transparent; color: #64748b; font-size: 0.75rem; text-align: center; max-width: 100%; }
+  .controls { display: flex; gap: 1rem; align-items: center; }
+  button { padding: 0.75rem 1.5rem; border: none; border-radius: 8px; font-size: 1rem; cursor: pointer; transition: all 0.2s; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #btnMic { background: #22c55e; color: white; font-size: 1.2rem; width: 64px; height: 64px; border-radius: 50%; }
+  #btnMic.recording { background: #ef4444; animation: pulse 1.5s infinite; }
+  #btnConnect { background: #3b82f6; color: white; }
+  #btnDisconnect { background: #64748b; color: white; }
+  @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 50% { box-shadow: 0 0 0 15px rgba(239,68,68,0); } }
+  .audio-viz { width: 100%; max-width: 600px; height: 60px; background: #1e293b; border-radius: 8px; margin-bottom: 1rem; }
+</style>
+</head>
+<body>
+
+<h1>🎙️ Sarvam VoiceBot Test Client</h1>
+<p class="subtitle">Bidirectional Voice Banking Agent — Manual Testing</p>
+
+<div class="status-bar">
+  <span><span class="status-dot dot-red" id="wsDot"></span> WebSocket: <span id="wsStatus">Disconnected</span></span>
+  <span>|</span>
+  <span>Session: <span id="sessionId">—</span></span>
+</div>
+
+<canvas class="audio-viz" id="visualizer"></canvas>
+
+<div class="chat-box" id="chatBox"></div>
+
+<div class="controls">
+  <button id="btnConnect" onclick="connect()">Connect</button>
+  <button id="btnMic" onclick="toggleMic()" disabled>🎤</button>
+  <button id="btnDisconnect" onclick="disconnect()" disabled>Disconnect</button>
+</div>
+
+<script>
+const SAMPLE_RATE = 16000;
+const CHUNK_MS = 20;
+const CHUNK_SAMPLES = SAMPLE_RATE * CHUNK_MS / 1000; // 320
+
+let ws = null;
+let audioCtx = null;
+let mediaStream = null;
+let scriptNode = null;
+let isRecording = false;
+let playbackQueue = [];
+let isPlaying = false;
+let currentAudioSource = null; // tracks the currently playing AudioBufferSourceNode
+
+// Audio visualization
+const canvas = document.getElementById('visualizer');
+const canvasCtx = canvas.getContext('2d');
+let analyser = null;
+
+function addMessage(text, type = 'system') {
+  const box = document.getElementById('chatBox');
+  const div = document.createElement('div');
+  div.className = `msg msg-${type}`;
+  div.textContent = text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function setStatus(connected) {
+  const dot = document.getElementById('wsDot');
+  const label = document.getElementById('wsStatus');
+  dot.className = 'status-dot ' + (connected ? 'dot-green' : 'dot-red');
+  label.textContent = connected ? 'Connected' : 'Disconnected';
+  document.getElementById('btnMic').disabled = !connected;
+  document.getElementById('btnDisconnect').disabled = !connected;
+  document.getElementById('btnConnect').disabled = connected;
+}
+
+function connect() {
+  const port = location.port || '8000';
+  const url = `ws://${location.hostname || 'localhost'}:${port}/ws/voice`;
+  addMessage(`Connecting to ${url}...`);
+
+  ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => {
+    setStatus(true);
+    addMessage('Connected ✓');
+  };
+
+  ws.onmessage = (event) => {
+    if (typeof event.data === 'string') {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'session_start') {
+        document.getElementById('sessionId').textContent = msg.session_id;
+        addMessage(`Session started: ${msg.session_id}`);
+      } else if (msg.type === 'state') {
+        if (msg.state === 'listening') {
+          // Bot has finished speaking — stop any buffered audio immediately
+          stopAudioPlayback();
+        }
+        addMessage(`State: ${msg.state}`);
+      } else if (msg.type === 'transcript') {
+        addMessage(msg.text, 'user');
+      } else if (msg.type === 'response') {
+        addMessage(msg.text, 'bot');
+      } else if (msg.type === 'error') {
+        addMessage(`Error: ${msg.message}`);
+      } else if (msg.type === 'ping') {
+        // keepalive, ignore
+      } else {
+        addMessage(`Event: ${JSON.stringify(msg)}`);
+      }
+    } else {
+      // Binary TTS audio — queue for playback
+      playbackQueue.push(new Uint8Array(event.data));
+      if (!isPlaying) playNextChunk();
+    }
+  };
+
+  ws.onclose = (e) => {
+    setStatus(false);
+    addMessage(`Disconnected (code: ${e.code})`);
+    stopMic();
+  };
+
+  ws.onerror = () => {
+    addMessage('WebSocket error');
+  };
+}
+
+function disconnect() {
+  if (ws) {
+    ws.send(JSON.stringify({ type: 'end' }));
+    ws.close();
+    ws = null;
+  }
+  stopMic();
+  setStatus(false);
+}
+
+async function toggleMic() {
+  if (isRecording) {
+    stopMic();
+  } else {
+    await startMic();
+  }
+}
+
+async function startMic() {
+  try {
+    audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: { sampleRate: SAMPLE_RATE, channelCount: 1, echoCancellation: true, noiseSuppression: true }
+    });
+
+    const source = audioCtx.createMediaStreamSource(mediaStream);
+
+    // Visualization
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 256;
+    source.connect(analyser);
+    drawVisualization();
+
+    // Process audio in chunks — buffer must be power of 2
+    const SCRIPT_BUFFER = 512; // nearest power of 2 >= CHUNK_SAMPLES (320)
+    scriptNode = audioCtx.createScriptProcessor(SCRIPT_BUFFER, 1, 1);
+    let residual = new Float32Array(0);
+
+    scriptNode.onaudioprocess = (e) => {
+      if (!isRecording || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+      const input = e.inputBuffer.getChannelData(0);
+      // Concatenate with any leftover from previous callback
+      const combined = new Float32Array(residual.length + input.length);
+      combined.set(residual);
+      combined.set(input, residual.length);
+
+      // Send complete 320-sample (20ms) chunks
+      let offset = 0;
+      while (offset + CHUNK_SAMPLES <= combined.length) {
+        const chunk = combined.subarray(offset, offset + CHUNK_SAMPLES);
+        const int16 = new Int16Array(CHUNK_SAMPLES);
+        for (let i = 0; i < CHUNK_SAMPLES; i++) {
+          int16[i] = Math.max(-32768, Math.min(32767, Math.round(chunk[i] * 32767)));
+        }
+        ws.send(int16.buffer);
+        offset += CHUNK_SAMPLES;
+      }
+      // Keep remainder for next callback
+      residual = combined.slice(offset);
+    };
+
+    source.connect(scriptNode);
+    scriptNode.connect(audioCtx.destination); // needed for onaudioprocess to fire
+
+    isRecording = true;
+    document.getElementById('btnMic').classList.add('recording');
+    document.getElementById('btnMic').textContent = '⏹️';
+    addMessage('Microphone ON — speak now');
+  } catch (err) {
+    addMessage(`Mic error: ${err.message}`);
+  }
+}
+
+function stopMic() {
+  isRecording = false;
+  document.getElementById('btnMic').classList.remove('recording');
+  document.getElementById('btnMic').textContent = '🎤';
+
+  if (scriptNode) { scriptNode.disconnect(); scriptNode = null; }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  analyser = null;
+}
+
+// Stop any ongoing TTS playback and clear the queue (called on barge-in)
+function stopAudioPlayback() {
+  playbackQueue.length = 0;
+  isPlaying = false;
+  if (currentAudioSource) {
+    try {
+      currentAudioSource.src.stop();
+      currentAudioSource.ctx.close();
+    } catch (e) { /* already ended */ }
+    currentAudioSource = null;
+  }
+}
+
+// Play TTS audio chunks (MP3 format from Sarvam streaming TTS)
+async function playNextChunk() {
+  if (playbackQueue.length === 0) { isPlaying = false; return; }
+  isPlaying = true;
+
+  const audioBytes = playbackQueue.shift();
+  try {
+    const playCtx = new AudioContext();
+    // decodeAudioData handles both MP3 and WAV natively in all modern browsers
+    const audioBuffer = await playCtx.decodeAudioData(audioBytes.buffer.slice(audioBytes.byteOffset, audioBytes.byteOffset + audioBytes.byteLength));
+    const src = playCtx.createBufferSource();
+    src.buffer = audioBuffer;
+    src.connect(playCtx.destination);
+    currentAudioSource = { src, ctx: playCtx };
+    src.onended = () => { currentAudioSource = null; playCtx.close(); playNextChunk(); };
+    src.start();
+    addMessage('🔊 Playing TTS audio', 'bot');
+  } catch (err) {
+    addMessage(`Audio decode error: ${err.message}`);
+    playNextChunk(); // skip and try next
+  }
+}
+
+// Audio visualization
+function drawVisualization() {
+  if (!analyser) return;
+  requestAnimationFrame(drawVisualization);
+
+  const bufLen = analyser.frequencyBinCount;
+  const dataArray = new Uint8Array(bufLen);
+  analyser.getByteFrequencyData(dataArray);
+
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+  canvasCtx.fillStyle = '#1e293b';
+  canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const barW = (canvas.width / bufLen) * 2;
+  let x = 0;
+  for (let i = 0; i < bufLen; i++) {
+    const barH = (dataArray[i] / 255) * canvas.height;
+    canvasCtx.fillStyle = `hsl(${200 + dataArray[i] * 0.3}, 80%, 55%)`;
+    canvasCtx.fillRect(x, canvas.height - barH, barW - 1, barH);
+    x += barW;
+  }
+}
+</script>
+</body>
+</html>
